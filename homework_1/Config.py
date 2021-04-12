@@ -1,5 +1,5 @@
 import os
-os.chdir('C:\\Users\\ibeli\\OneDrive\\Documents\\DataEngineering\\homework_1')  #Please, change the dirrectory which is used in your machine
+os.chdir('C:\\Users\\ibeli\\OneDrive\\Documents\\GitHub\\DataEngineering\\homework_1')  #Please, change the dirrectory which is used in your machine
 from PATHS import API_CONFIG_PATH, LOG_PATH
 import requests
 import logging
@@ -33,19 +33,17 @@ class Config():
                 logging.error(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}|type=ApiNameError|description=No such API exists in {API_CONFIG_PATH}")
     def get_access_token(self):
         try:
-            token = requests.post(
+            result = requests.post(
                 url=self.url+self.auth['auth_endpoint'],
                 data=json.dumps(dict(filter(lambda x: x[0] !='auth_endpoint', self.auth.items()))),
-                #data=json.dumps(dict(zip(['username','password'],[self.user, self.password]))), 
                 **self.add_params
-                ).json()['access_token']
-        except requests.HTTPError as e:
-            loger.error(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}|type=APIError|description={e}|ApiName={self.api_name}")
+                )
+            result.raise_for_status()
+            token = result.json()['access_token']
+            return f"JWT {token}"
+        except requests.exceptions.HTTPError as e:
+            loger.error(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}|type=HTTPError|status={e.response.status_code}|description={e.text}|ApiName={self.api_name}")
             return None
         except KeyError:
             loger.error(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}|type=APIError|description=No token returned|ApiName={self.api_name}")
             return None
-        except Exception as e:
-            loger.error(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}|type=APIError|description={e}|ApiName={self.api_name}")
-            return None
-        return f"JWT {token}"

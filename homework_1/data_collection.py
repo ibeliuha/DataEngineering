@@ -1,5 +1,5 @@
 import os
-os.chdir('C:\\Users\\ibeli\\OneDrive\\Documents\\DataEngineering\\homework_1')  #Please, change the dirrectory which is used in your machine
+os.chdir('C:\\Users\\ibeli\\OneDrive\\Documents\\GitHub\\DataEngineering\\homework_1')  #Please, change the dirrectory which is used in your machine
 import errno
 import requests
 import logging
@@ -30,36 +30,43 @@ def get_data(api_name, endpoint, params=None, split_by_param=0, output_file_form
     """
     conf = Config(api_name=api_name)
     conf.add_params['headers']['Authorization'] = conf.get_access_token()
-    try:
-        endpoint = conf.endpoints[endpoint]
-        uri = endpoint.get('uri',None)
-        not_allowable_params = [x for x in params if x not in endpoint['params']]
-        if len(not_allowable_params)==0:
-            all_comb = product(*list(params.values()))
-            for comb in all_comb:
+    endpoint = conf.endpoints[endpoint]
+    uri = endpoint.get('uri',None)
+    not_allowable_params = [x for x in params if x not in endpoint['params']]
+
+    if len(not_allowable_params)==0:
+        all_comb = product(*list(params.values()))
+        for comb in all_comb:
+            try:
                 result = requests.get(
                                 url=conf.url+uri,
                                 data=json.dumps(dict(zip(params.keys(), comb))),
                                 **conf.add_params
-                            ).text
-                write_data(data=result, folder_name=comb[0], file_name='+'.join(comb), file_format=output_file_format)
-                sleep(1)
-        else:
-            loger.error(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}|type=APIError|description=Passed not allowable params - {','.join(not_allowable_params)}|ApiName={api_name}")
-    except KeyError:
-        loger.error(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}|type=APIError|description=No endpoint with name '{endpoint}' exists|ApiName={api_name}")
-    except requests.HTTPError as e:
-        loger.error(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}|type=APIError|error={e}|ApiName={api_name}")
+                                )
+                result.raise_for_status()
+            except requests.exceptions.HTTPError as e:
+                if e.response.status_code == 401:
+                    conf.add_params['headers']['Authorization'] = conf.get_access_token()
+                    result = requests.get(
+                                    url=conf.url+uri,
+                                    data=json.dumps(dict(zip(params.keys(), comb))),
+                                    **conf.add_params)
+                else:
+                    loger.error(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}|type=HTTPError|status={result.status_code}|response={result.text}|ApiName={api_name}|endpoint={uri}")
+            finally:
+                if result.status_code == 200:
+                    write_data(data=result.text, folder_name=comb[0], file_name='+'.join(comb), file_format=output_file_format)          
+            sleep(1)
+    else:
+        loger.error(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}|type=APIError|description=Passed not allowable params - {','.join(not_allowable_params)}|ApiName={api_name}")
 
 def write_data(data, folder_name, file_name, file_format='json'):
     directory = os.path.join(REPORT_PATH, folder_name)
-    try:
-        os.mkdir(directory)
-    except OSError as e:
-        if e.errno != errno.EEXIST:
+    if not os.path.exists(directory):
+        try:
+            os.mkdir(directory)
+        except OSError as e:
             loger.error(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}|type=IOError|description=directory {directory} can not be created|error={e}")
-        else:
-            pass
     with open(os.path.join(directory, f'{file_name}.{file_format}'), 'w') as f:
         try:
             if file_format=='json':
