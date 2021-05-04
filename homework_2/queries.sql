@@ -97,7 +97,7 @@ order by sum(c.active) desc
 		select	city_id,
 				case
 					when city ilike 'a%' then 'starts_with_a'
-					when city ilike '%-%' then 'contains_syphen'
+					when city ilike '%-%' then 'contains_hyphen'
 				end as city_type
 		from city) as city_type
 	on a.city_id = city_type.city_id
