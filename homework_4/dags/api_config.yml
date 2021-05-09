@@ -1,0 +1,12 @@
+app:
+  base_url: https://robot-dreams-de-api.herokuapp.com
+  auth:
+    endpoint: /auth
+    username: rd_dreams
+    password: djT6LasE 
+  data:
+    endpoint: /out_of_stock
+  headers: 
+    content-type: 'application/json'
+    Authorization: 'JWT '
+  add_params:

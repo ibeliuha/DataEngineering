@@ -1,0 +1,4 @@
+user: pguser
+password: secret
+host: '192.168.31.218'
+port: 5432
