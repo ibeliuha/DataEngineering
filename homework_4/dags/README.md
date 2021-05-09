@@ -1,0 +1,1 @@
+In order to run correctly all content from directory '/dag' is supposed to be copied to /home/user/airflow/dags on VM which was provided in the beginning of the course
