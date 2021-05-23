@@ -10,7 +10,7 @@ import logging
 #some piece of code which resolve the problem when loger doesn't write anything to a file
 for handler in logging.root.handlers[:]:
     logging.root.removeHandler(handler)
-logging.basicConfig(filename=LOG_PATH, level=logging.WARN)
+logging.basicConfig(filename=os.path.join(LOG_PATH,'dshop_data_collection.log'), level=logging.WARN)
 
 
 class Config():

@@ -5,34 +5,19 @@ import hdfs
 from airflow import DAG
 from airflow.operators.python_operator import PythonOperator
 from airflow.operators.bash_operator import BashOperator
+from airflow.operators import DummyOperator
 from airflow.exceptions import AirflowException
 from airflow.hooks.base_hook import BaseHook
 from datetime import datetime, timedelta
-from paths import CONFIG_PATH
+from connections import get_db_config, get_hdfs_connection
 import yaml
+from paths import BRONZE_DIR, LOG_PATH
+import logging
+for handler in logging.root.handlers[:]:
+    logging.root.removeHandler(handler)
+logging.basicConfig(filename=os.path.join(LOG_PATH,'dshop_data_collection.log'), level=logging.INFO)
 #constant definition
 DBNAME='dshop_bu'
-
-def get_db_config(conf_id='DB'):
-    with open(CONFIG_PATH, 'r') as conf_file:
-        conn_id = yaml.load(conf_file, Loader=yaml.FullLoader)['app'][conf_id]['airflow_conn_id']
-        conn = BaseHook.get_connection(conn_id)
-    
-        conf = dict()
-        conf['user'] = conn.login
-        conf['password'] = conn.password
-        conf['host'] = conn.host
-        conf['port'] = conn.port
-        conf['dbname'] = DBNAME
-    return conf
-
-def get_hdfs_connection(conf_id='HDFS'):
-    with open(CONFIG_PATH, 'r') as conf_file:
-        conn_id = yaml.load(conf_file, Loader=yaml.FullLoader)['app'][conf_id]['airflow_conn_id']
-        conn = BaseHook.get_connection(conn_id)
-        url = conn.host+':'+str(conn.port)+'/'
-        user = conn.login
-    return url, user
 
 def get_all_tables(config_file):
     query = '''
@@ -47,19 +32,24 @@ def get_all_tables(config_file):
     return tables
 
 def get_data(as_of_date, table, config):
-    with psycopg2.connect(**config) as con:
-        cursor = con.cursor()
-        directory = DBNAME+'/'+table
-        #hdfs connection
-        url, user = get_hdfs_connection()
-        client = hdfs.InsecureClient(url, user=user)
-        with client.write(directory+'/'+as_of_date+'.csv') as output:
-            cursor.copy_expert(f'COPY public.{table} TO STDOUT WITH HEADER CSV', output)
+    logging.info(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}|message=started data extraction from table {table}")
+    try:
+        with psycopg2.connect(**config) as con:
+            cursor = con.cursor()
+            directory = BRONZE_DIR+DBNAME+'/'+table
+            #hdfs connection
+            url, user = get_hdfs_connection()
+            client = hdfs.InsecureClient(url, user=user)
+            with client.write(directory+'/'+as_of_date+'.csv') as output:
+                cursor.copy_expert(f'COPY public.{table} TO STDOUT WITH HEADER CSV', output)
+                logging.info(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}|message=finished data extraction from table {table}")
+    except Exception as e:
+        logging.error(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}|message=data extraction for {table} failed|error={e}")
 
 def generate_tasks(dag, table, as_of_date, config_file):
     mkdir_op = BashOperator(
         task_id = table+'_mkdir',
-        bash_command = f'''hadoop fs -mkdir -p {DBNAME}/{table}'''
+        bash_command = f'''hadoop fs -mkdir -p {BRONZE_DIR}{DBNAME}/{table}'''
     )
 
     py_op = PythonOperator(
@@ -87,7 +77,13 @@ with DAG(
         'retry_delay': timedelta(minutes=1)
         } 
     ) as dag:
-    conf = get_db_config()
+
+    bronze_dummy = DummyOperator(
+        task_id = 'bronze_layer',
+        dag=dag
+    )
+
+    conf = get_db_config(dbname=DBNAME)
     tables = get_all_tables(config_file=conf)
     for table in tables:
         globals()[table[0]+'_mkdir'], globals()[table[0]] = generate_tasks(
@@ -95,5 +91,7 @@ with DAG(
             table=table[0],
             as_of_date=datetime.now().strftime('%Y-%m-%d'),
             config_file=conf)
-        globals()[table[0]+'_mkdir']>>globals()[table[0]]
+        globals()[table[0]+'_mkdir']>>globals()[table[0]]>>bronze_dummy
+    
+    
 
