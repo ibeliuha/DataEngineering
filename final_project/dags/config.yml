@@ -1,0 +1,36 @@
+app:
+  API:
+    airflow_conn_id: out_of_stock
+    authorization:
+      endpoint: /auth
+    data:
+      endpoint: /out_of_stock
+    headers: 
+      content-type: 'application/json'
+      Authorization: 'JWT '
+    add_params:
+  DB:
+    airflow_conn_id: my_pg_conn
+  HDFS:
+    airflow_conn_id: my_hdfs_conn
+    partitions:
+      orders: order_date
+      out_of_stock: date
+    write_modes:
+      orders: append
+      aisles: overwrite
+      clients: overwrite
+      departments: overwrite
+      location_areas: overwrite
+      products: overwrite
+      store_types: overwrite
+      stores: overwrite
+  DW:
+    airflow_conn_id: my_gp_conn
+    tables:
+      DB:
+        - orders
+        - dim_clients
+        - dim_products
+        - dim_stores
+      API: out_of_stock
