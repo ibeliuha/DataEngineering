@@ -13,10 +13,10 @@ from airflow.hooks.base_hook import BaseHook
 from datetime import datetime, timedelta
 from connections import get_db_config, get_hdfs_config, get_dw_config
 import yaml
-from paths import BRONZE_DIR,SILVER_DIR
+from constants import BRONZE_DIR,SILVER_DIR, DBNAME, DW_DBNAME
 import logging
 #constant definition
-DBNAME='dshop_bu'
+
 
 def get_all_tables(config_file):
     query = '''
@@ -28,20 +28,24 @@ def get_all_tables(config_file):
         cursor = con.cursor()
         cursor.execute(query)
         tables = cursor.fetchall()
+        tables = [x[0] for x in tables]
     return tables
 
 def get_data(as_of_date, table, config):
+    #defining key, value pair for sql queries which is conditionaly extracted. This approach is probably better then if else statements
     conditional_sql = {
         "orders": f"COPY (SELECT * FROM public.orders WHERE order_date='{as_of_date}') TO STDOUT WITH HEADER CSV"
     }
     logging.info(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}|table={table}|process=data extraction|status=started")
+    directory = f'{BRONZE_DIR}/{DBNAME}/{table}'
+    os.system(f'hadoop fs -mkdir -p {directory}') #create directory if not exists
     try:
         with psycopg2.connect(**config) as con:
             cursor = con.cursor()
             #hdfs connection
             url, user = get_hdfs_config(conf_type='connection')
             client = hdfs.InsecureClient(url, user=user)
-            with client.write(f"{BRONZE_DIR}/{DBNAME}/{table}/{as_of_date}.csv") as output:
+            with client.write(f"{directory}/{as_of_date}.csv") as output:
                 cursor.copy_expert(conditional_sql.get(table, f'COPY public.{table} TO STDOUT WITH HEADER CSV'), output)
                 logging.info(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}|table={table}|process=data extraction|status=succeeded")
     except Exception as e:
@@ -59,6 +63,8 @@ def clean_data(as_of_date, table):
                     .option("header", "true")\
                     .option("inferSchema", "true")\
                     .csv(f"{BRONZE_DIR}/{DBNAME}/{table}/{as_of_date}.csv")
+        directory = f'{SILVER_DIR}/{DBNAME}/{table}'
+        os.system(f'hadoop fs -mkdir -p {directory}') #create directory if not exists
         try:
             write_mode = get_hdfs_config(conf_type='write_modes')[table]
         except KeyError:
@@ -68,10 +74,10 @@ def clean_data(as_of_date, table):
             partition = get_hdfs_config(conf_type='partitions')[table]
             data.write\
                 .partitionBy(partition)\
-                .parquet(f'{SILVER_DIR}/{DBNAME}/{table}', mode=write_mode)
+                .parquet(f'{directory}', mode=write_mode)
         except KeyError:
             data.write\
-                .parquet(f'{SILVER_DIR}/{DBNAME}/{table}', mode=write_mode)
+                .parquet(f'{directory}', mode=write_mode)
     except Exception as e:
         logging.error(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}|table={table}|process=data cleaning|status=failed|error={e}")
     logging.info(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}|table={table}|process=data cleaning|status=succeeded")
@@ -125,9 +131,8 @@ def load_data(as_of_date, table, config):
         'dim_stores': load_stores,
         'dim_products': load_products
         }
-
+    logging.info(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}|table={table}|process=loading data to DW|status=started")
     try:
-        logging.info(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}|table={table}|process=loading data to DW|status=started")
         spark = SparkSession\
                     .builder\
                     .config('spark.jars', '/home/user/shared_folder/postgresql-42.2.20.jar')\
@@ -141,64 +146,11 @@ def load_data(as_of_date, table, config):
         logging.error(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}|table={table}|process=loading data to DW|status=failed|error={e}")
         raise AirflowException()
     logging.info(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}|table={table}|process=loading data to DW|status=succeeded")
-    
-        
-
-def generate_bronze_tasks(dag, table, as_of_date, config):
-    mkdir_op = BashOperator(
-        task_id = table+'_mkdir_bronze',
-        bash_command = f'''hadoop fs -mkdir -p {BRONZE_DIR}/{DBNAME}/{table}'''
-    )
-
-    py_op = PythonOperator(
-        task_id = table+'_bronze',
-        python_callable=get_data,
-        op_kwargs={
-            'as_of_date':as_of_date,
-            'table':table,
-            'config':config
-        },
-        dag=dag,
-        trigger_rule='all_success'
-    )
-    return (mkdir_op, py_op)
-
-def generate_silver_tasks(dag, table, as_of_date):
-    mkdir_op = BashOperator(
-        task_id = table+'_mkdir_silver',
-        bash_command = f'''hadoop fs -mkdir -p {SILVER_DIR}/{DBNAME}/{table}''',
-        trigger_rule='all_success'
-    )
-
-    py_op = PythonOperator(
-        task_id = table+'_silver',
-        python_callable=clean_data,
-        op_kwargs={
-            'as_of_date':as_of_date,
-            'table':table
-        },
-        dag=dag,
-        trigger_rule='all_success'
-    )
-    return (mkdir_op, py_op)
-
-def generate_gold_tasks(dag, table, as_of_date, config):
-    return PythonOperator(
-                task_id = table+'_gold',
-                python_callable=load_data,
-                op_kwargs={
-                    'as_of_date': as_of_date,
-                    'table':table,
-                    'config':config
-                },
-                dag=dag,
-                trigger_rule='all_success'
-            )
 
 with DAG(
     dag_id = 'dbshop_data_collection',
-    start_date = datetime(2021, 1, 1),
-    end_date = datetime(2021,1,1),
+    start_date = datetime(2021,1,1),
+    end_date = datetime(2021,1,2),
     schedule_interval = '@daily',
     default_args={
         'owner': 'airflow',
@@ -220,37 +172,61 @@ with DAG(
         dag=dag,
         trigger_rule='none_skipped'
     )
+    gold_dummy = DummyOperator(
+        task_id = 'gold_layer',
+        dag=dag,
+        trigger_rule='none_skipped'
+    )
 
+    #BRONZE&SILVER TASKS
     config_db = get_db_config(dbname=DBNAME)
     tables_db = get_all_tables(config_file=config_db)
+    bronze_tasks = []
+    silver_tasks = []
     for table in tables_db:
-        #BRONZE TASKS
-        globals()[table[0]+'_mkdir_bronze'], globals()[table[0]+'_bronze'] = generate_bronze_tasks(
-            dag=dag,
-            table=table[0],
-            as_of_date='{{ds}}',
-            config=config_db)
-        #SILVER TASKS
-        globals()[table[0]+'_mkdir_silver'], globals()[table[0]+'_silver'] = generate_silver_tasks(
-            dag=dag,
-            table=table[0],
-            as_of_date='{{ds}}'
+        bronze_tasks.append(
+            PythonOperator(
+                task_id = table+'_bronze',
+                python_callable=get_data,
+                op_kwargs={
+                    'as_of_date':'{{ds}}',
+                    'table':table,
+                    'config':config_db
+                },
+                dag=dag,
+                trigger_rule='all_success'
             )
-        
-        globals()[table[0]+'_mkdir_bronze']>>globals()[table[0]+'_bronze']>>bronze_dummy>>globals()[table[0]+'_mkdir_silver']>>globals()[table[0]+'_silver']>>silver_dummy
+        )
+        silver_tasks.append(
+            PythonOperator(
+                task_id = table+'_silver',
+                python_callable=clean_data,
+                op_kwargs={
+                    'as_of_date':'{{ds}}',
+                    'table':table
+                },
+                dag=dag,
+                trigger_rule='all_success'
+            )
+        )
     #GOLD TASKS
-    config_dw, tables_dw = get_dw_config()
+    config_dw, tables_dw = get_dw_config(dbname=DW_DBNAME)
     gold_tasks = []
     for table in tables_dw['DB']:
         gold_tasks.append(
-            generate_gold_tasks(
-                dag=dag, 
-                table=table, 
-                as_of_date='{{ds}}', 
-                config=config_dw
-                )
+            PythonOperator(
+                task_id = table+'_gold',
+                python_callable=load_data,
+                op_kwargs={
+                    'as_of_date': '{{ds}}',
+                    'table':table,
+                    'config':config_dw
+                },
+                dag=dag,
+                trigger_rule='all_success'
+            )
         )
-    silver_dummy>>gold_tasks
+    bronze_tasks>>bronze_dummy>>silver_tasks>>silver_dummy>>gold_tasks>>gold_dummy
 
     
     

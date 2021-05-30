@@ -13,9 +13,10 @@ from pyspark.sql.types import DateType, IntegerType, StructType, StructField
 from datetime import datetime, timedelta
 from Config import Config
 from connections import get_hdfs_config, get_dw_config
-from paths import BRONZE_DIR, SILVER_DIR
+from constants import BRONZE_DIR, SILVER_DIR
 import logging
 #some piece of code which resolve the problem when loger doesn't write anything to a file
+API_NAME='out_of_stock'
 
 def get_data(date):
     logging.info(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}|period={date}|process=data extraction|status=started")
@@ -32,16 +33,19 @@ def get_data(date):
         write_data(result.json(), date)
         logging.info(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}|period={date}|process=data extraction|status=succeeded")
 
-
 def write_data(data, date):
+    directory = f'{BRONZE_DIR}/{API_NAME}'
+    os.system(f'hadoop fs -mkdir -p {directory}') #create directory if not exists
+    
     url, user = get_hdfs_config(conf_type='connection')
     client = hdfs.InsecureClient(url, user=user)
-    with client.write(f"{BRONZE_DIR}/out_of_stock/{date}.json", encoding='utf-8', overwrite=True) as output:
+    with client.write(f"{directory}/{date}.json", encoding='utf-8', overwrite=True) as output:
         json.dump(data, output)
-        #cursor.copy_expert(f'COPY public.{table} TO STDOUT WITH HEADER CSV', output)
 
 def clean_data(date):
     logging.info(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}|period={date}|process=data cleaning|status=started")
+    directory = f'{SILVER_DIR}/{API_NAME}'
+    os.system(f'hadoop fs -mkdir -p {directory}') #create directory if not exists
     try:
         spark = SparkSession\
             .builder\
@@ -54,7 +58,7 @@ def clean_data(date):
                 StructField("product_id", IntegerType(), True)
             ]
         ) 
-        data = spark.read.schema(schema).json(f"{BRONZE_DIR}/out_of_stock/{date}.json")
+        data = spark.read.schema(schema).json(f"{BRONZE_DIR}/{API_NAME}/{date}.json")
         data = data\
                 .filter(F.col('date').isNotNull() & F.col('product_id').isNotNull())\
                 .dropDuplicates()
@@ -62,7 +66,7 @@ def clean_data(date):
         partition = get_hdfs_config(conf_type='partitions')['out_of_stock']
         data.write\
             .partitionBy(partition)\
-            .parquet(f'{SILVER_DIR}/out_of_stock', mode='append')
+            .parquet(directory, mode='append')
     except Exception as e:
         logging.error(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}|period={date}|process=data cleaning|status=failed|error={e}")
         raise AirflowException()
@@ -82,7 +86,7 @@ def load_data(date):
                 .config('spark.jars', '/home/user/shared_folder/postgresql-42.2.20.jar')\
                 .appName("loading_out_of_stock_data")\
                 .getOrCreate()
-    data = spark.read.parquet(f'{SILVER_DIR}/out_of_stock/date={date}')
+    data = spark.read.parquet(f'{SILVER_DIR}/{API_NAME}/date={date}')
     data\
         .withColumn('date', F.lit(date))\
         .withColumn('date', F.col('date').cast(DateType()))\
@@ -90,8 +94,8 @@ def load_data(date):
 
 with DAG(
     dag_id = 'out_of_stock_data_collection',
-    start_date = datetime(2021, 4, 6),
-    end_date = datetime(2021, 4, 7),
+    start_date = datetime(2021, 1, 1),
+    end_date = datetime(2021, 1, 2),
     schedule_interval = '@daily',
     default_args={
         'owner': 'airflow',
@@ -102,16 +106,6 @@ with DAG(
         'retry_delay': timedelta(minutes=1)
         } 
     ) as dag:
-
-    mkdir_bronze = BashOperator(
-        task_id = 'mkdir_bronze',
-        bash_command = f'''hadoop fs -mkdir -p {BRONZE_DIR}/out_of_stock'''
-    )
-    mkdir_silver = BashOperator(
-        task_id = 'mkdir_silver',
-        bash_command = f'''hadoop fs -mkdir -p {SILVER_DIR}/out_of_stock''',
-        trigger_rule='all_success'
-    )
     
     get_data_task = PythonOperator(
         task_id = 'load_to_bronze_out_of_stock_data',
@@ -131,4 +125,4 @@ with DAG(
         op_kwargs={'date':'{{ds}}'},
         trigger_rule='all_success'
     )
-    mkdir_bronze>>get_data_task>>mkdir_silver>>clean_data_task>>load_data_task
+    get_data_task>>clean_data_task>>load_data_task
