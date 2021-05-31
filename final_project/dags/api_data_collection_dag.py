@@ -13,10 +13,11 @@ from pyspark.sql.types import DateType, IntegerType, StructType, StructField
 from datetime import datetime, timedelta
 from Config import Config
 from connections import get_hdfs_config, get_dw_config
-from constants import BRONZE_DIR, SILVER_DIR
+from paths import BRONZE_DIR, SILVER_DIR
 import logging
-#some piece of code which resolve the problem when loger doesn't write anything to a file
+#define an API name
 API_NAME='out_of_stock'
+
 
 def get_data(date):
     logging.info(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}|period={date}|process=data extraction|status=started")
@@ -95,7 +96,7 @@ def load_data(date):
 with DAG(
     dag_id = 'out_of_stock_data_collection',
     start_date = datetime(2021, 1, 1),
-    end_date = datetime(2021, 1, 2),
+    end_date = datetime(2021, 1, 3),
     schedule_interval = '@daily',
     default_args={
         'owner': 'airflow',

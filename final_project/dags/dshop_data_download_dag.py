@@ -13,9 +13,11 @@ from airflow.hooks.base_hook import BaseHook
 from datetime import datetime, timedelta
 from connections import get_db_config, get_hdfs_config, get_dw_config
 import yaml
-from constants import BRONZE_DIR,SILVER_DIR, DBNAME, DW_DBNAME
+from paths import BRONZE_DIR,SILVER_DIR
 import logging
-#constant definition
+
+#define database name
+DBNAME='dshop_bu'
 
 
 def get_all_tables(config_file):
@@ -150,7 +152,7 @@ def load_data(as_of_date, table, config):
 with DAG(
     dag_id = 'dbshop_data_collection',
     start_date = datetime(2021,1,1),
-    end_date = datetime(2021,1,2),
+    end_date = datetime(2021,1,3),
     schedule_interval = '@daily',
     default_args={
         'owner': 'airflow',
@@ -210,7 +212,7 @@ with DAG(
             )
         )
     #GOLD TASKS
-    config_dw, tables_dw = get_dw_config(dbname=DW_DBNAME)
+    config_dw, tables_dw = get_dw_config()
     gold_tasks = []
     for table in tables_dw['DB']:
         gold_tasks.append(
