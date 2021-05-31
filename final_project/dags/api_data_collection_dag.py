@@ -2,7 +2,6 @@ import os
 os.chdir('/home/user/airflow/dags')
 from airflow import DAG
 from airflow.operators.python_operator import PythonOperator
-from airflow.operators.bash_operator import BashOperator
 from airflow.exceptions import AirflowException
 import errno
 import requests
