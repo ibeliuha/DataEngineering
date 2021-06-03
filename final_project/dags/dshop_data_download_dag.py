@@ -6,10 +6,8 @@ from pyspark.sql import SparkSession, functions as F
 from pyspark.sql.types import DateType
 from airflow import DAG
 from airflow.operators.python_operator import PythonOperator
-from airflow.operators.bash_operator import BashOperator
 from airflow.operators import DummyOperator
 from airflow.exceptions import AirflowException
-from airflow.hooks.base_hook import BaseHook
 from datetime import datetime, timedelta
 from connections import get_db_config, get_hdfs_config, get_dw_config
 import yaml
@@ -65,6 +63,9 @@ def clean_data(as_of_date, table):
                     .option("header", "true")\
                     .option("inferSchema", "true")\
                     .csv(f"{BRONZE_DIR}/{DBNAME}/{table}/{as_of_date}.csv")
+        data = data.dropDuplicates() #remove duplicates
+        
+        #write data to parquet
         directory = f'{SILVER_DIR}/{DBNAME}/{table}'
         os.system(f'hadoop fs -mkdir -p {directory}') #create directory if not exists
         try:
